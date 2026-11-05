@@ -80,11 +80,6 @@ _To be added._
 
 ## Team
 
-| Role | Responsibilities |
-| --- | --- |
-| A | Data & evaluation, presentation slides |
-| B | Collaborative filtering (KNN, MF) |
-| C | Content-based & hybrid, presentation |
 
 ## License
 
