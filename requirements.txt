@@ -1,0 +1,10 @@
+# Install: pip install -r requirements.txt
+# If you start using a new library, add it here in the same PR.
+# Remove libraries that are no longer used.
+
+numpy            # numerical computation
+pandas           # data loading and processing
+scipy            # sparse rating matrix
+scikit-learn     # TF-IDF, cosine similarity, TruncatedSVD
+matplotlib       # plots
+jupyter          # notebooks/
