@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Raw data (download separately, see data/README.md)
+data/*
+!data/README.md
