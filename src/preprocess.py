@@ -1,3 +1,4 @@
+import pandas as pd
 def load_data(seed: int = 42) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """train, val, test 평점 DataFrame 반환. 사용자별 hold-out, seed 고정."""
 
