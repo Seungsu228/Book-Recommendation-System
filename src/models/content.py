@@ -85,8 +85,10 @@ class ContentBased(Recommender):
             if hist_book_id in self.indices:
                 hist_idx = self.indices[hist_book_id]
                 #방금 계산한 한줄에서 가져오기
-                sim = target_sims[hist_idx]  
-        
+                sim = target_sims[hist_idx]
+                if sim > 0:
+                    sim_scores.append(sim)
+                    ratings.append(rating)
 
         # 유사한 책을 읽은 기록이 없으면 전체 평균 반환
         if not sim_scores or sum(sim_scores) == 0:
@@ -99,21 +101,25 @@ class ContentBased(Recommender):
         return float(np.clip(weighted_rating, 1.0, 5.0))
 
     def recommend(self, user_id: int, k: int = 10) -> list[int]:
-        """특정 유저에게 예상 평점이 가장 높은 상위 K개의 도서를 추천합니다."""
+        """유저가 읽은 책들과의 유사도로 전체 책의 예상 평점을 한 번에 계산해 상위 k권을 반환합니다."""
         user_history = self.user_ratings.get(user_id, {})
-        
-        # 1. 유저가 이미 읽은책은 추천에서 제외하기 위해 안 읽은 책 목록 추출
-        unread_books = [book_id for book_id in self.indices.keys() if book_id not in user_history]
-        
-        # 2. 안 읽은 책들에 대해 예상 평점계산
-        predictions = []
-        for book_id in unread_books:
-            est_rating = self.predict(user_id, book_id)
-            predictions.append((book_id, est_rating))
-            
-        # 3. 예상 평점 내림차순(높은 순)으로 정렬
-        predictions.sort(key=lambda x: x[1], reverse=True)
-        
-        # 4. 상위 K개의 도서 ID만 리스트로 반환
-        return [book_id for book_id, _ in predictions[:k]]
-    
+        hist = [(self.indices[b], r) for b, r in user_history.items() if b in self.indices]
+        if not hist:
+            return self.books["book_id"].head(k).tolist()
+
+        hist_idx = np.array([i for i, _ in hist])
+        hist_ratings = np.array([r for _, r in hist], dtype=float)
+
+        # 읽은 책(행) x 전체 책(열) 유사도를 행렬 곱 한 번으로 계산
+        sims = linear_kernel(self.tfidf_combined[hist_idx], self.tfidf_combined)
+
+        # 책마다 predict와 같은 방식(유사도 가중 평균)으로 예상 평점 계산
+        num = hist_ratings @ sims
+        den = sims.sum(axis=0)
+        scores = np.full(den.shape, self.global_mean, dtype=float)
+        np.divide(num, den, out=scores, where=den > 0)
+
+        scores[hist_idx] = -np.inf  # 이미 읽은 책 제외
+        top = np.argpartition(-scores, k)[:k]
+        top = top[np.argsort(-scores[top])]
+        return self.books["book_id"].iloc[top].tolist()
