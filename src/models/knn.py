@@ -6,15 +6,18 @@ from .base import Recommender
 
 
 class ItemKNN(Recommender):
-    def __init__(self, k: int = 20, similarity: str = "cosine", min_support: int = 5):
+    def __init__(self, k: int = 20, similarity: str = "cosine", min_support: int = 5,
+                 like_threshold: float = 4.0):
         """
         k: 예측에 참고할 이웃 도서 수
         similarity: "cosine" | "adjusted_cosine" | "pearson"
         min_support: 유사도를 계산할 최소 공통 평가자 수
+        like_threshold: recommend()에서 "좋아한 책"으로 볼 최소 평점
         """
         self.k = k
         self.similarity = similarity
         self.min_support = min_support
+        self.like_threshold = like_threshold
 
     def fit(self, train: pd.DataFrame) -> "ItemKNN":
         # ── 1단계: ID → 행렬 위치 매핑 ─────────────────────────────
@@ -53,6 +56,7 @@ class ItemKNN(Recommender):
 
         # 평점 개수가 많은 순서 = 인기순. 처음 보는 사용자에게 추천할 때 쓴다.
         self.popular_ = np.argsort(-item_cnt)
+        self.pop_score_ = item_cnt / item_cnt.max()   # 0~1 인기 점수 (recommend에서 동점 정리용)
 
         # ── 4단계: 도서끼리 유사도 → 도서마다 가장 비슷한 k권만 저장 ──
         # 도서 i, j의 유사도 = 두 도서의 "평점 열 벡터" 사이의 코사인 유사도.
@@ -148,3 +152,38 @@ class ItemKNN(Recommender):
         s = nb.data[nb_pos]                      # 겹치는 이웃들의 유사도
         pred = self.item_mean_[iid] + np.dot(s, dev[rated_pos]) / s.sum()   # 위 예측식
         return float(np.clip(pred, 1.0, 5.0))   # 평점 범위(1~5)를 벗어나지 않게 자르기
+
+    # ── 6단계: recommend ───────────────────────────────────────────
+    # 순위는 predict의 예상 평점이 아니라 아래 점수로 매긴다 (Deshpande & Karypis, 2004,
+    # "Item-based top-N recommendation algorithms"):
+    #
+    #   score(i) = Σ s(i, j)      (j = 사용자가 좋아한 책, 즉 평점 ≥ like_threshold)
+    #
+    # 예상 평점 순으로 정렬하면, 이웃 중 겹치는 책이 한 권뿐인 도서도 그 한 권을 높게 줬다는 이유로
+    # 5점이 되어 상위를 차지한다. 근거가 약한 책이 올라오는 것이다.
+    # 유사도 합은 "좋아한 책 여러 권과 두루 비슷할수록" 커지므로 근거가 많은 책이 위로 온다.
+
+    def recommend(self, user_id: int, k: int = 10) -> list[int]:
+        uid = self.uidx_.get(user_id)
+        if uid is None:                           # 처음 보는 사용자는 인기순
+            return self.item_ids_[self.popular_[:k]].tolist()
+
+        row = self.R_[uid]
+        rated, ratings = row.indices, row.data    # 사용자가 평가한 책 위치와 평점
+        liked = rated[ratings >= self.like_threshold]
+        if len(liked) == 0:                       # 좋아한 책이 없으면 평가한 책 전체를 기준으로
+            liked = rated
+
+        n_items = len(self.item_ids_)
+        v = np.zeros(n_items, dtype=np.float32)
+        v[liked] = 1.0                            # 좋아한 책 자리만 1인 벡터
+
+        # S_ @ v → 각 도서 i에 대해 Σ_{j: 좋아한 책} s(i, j). 1만 권의 점수를 행렬 곱 한 번으로 계산한다.
+        scores = (self.S_ @ v).astype(np.float64)
+        scores += 1e-6 * self.pop_score_          # 점수가 같으면(특히 0) 인기 있는 책이 먼저 오도록 아주 작게 더함
+
+        scores[rated] = -np.inf                   # 이미 읽은 책은 추천하지 않음
+        k = min(k, n_items - len(rated))
+        top = np.argpartition(-scores, k)[:k]     # 상위 k개 위치 (순서는 아직 섞여 있음)
+        top = top[np.argsort(-scores[top])]       # 그 k개만 점수 순으로 정렬
+        return self.item_ids_[top].tolist()       # 위치 → book_id

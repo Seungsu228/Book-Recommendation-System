@@ -44,3 +44,30 @@ print("처음 보는 사용자/도서:", round(m.predict(10**9, 2), 3), round(m.
 print("RMSE/MAE (val 5만 건)")
 print("  BookMean:", evaluate_rating(BookMean().fit(train), val, sample_n=50000))
 print("  ItemKNN :", evaluate_rating(m, val, sample_n=50000))
+
+# ── 6단계 확인 ──
+from src.evaluate import evaluate_topk
+from src.models.baseline import Popularity
+
+u = int(val.iloc[0].user_id)
+recs = m.recommend(u, 5)
+print(f"사용자 {u} 추천:", recs, "/ 이미 읽은 책과 겹침:", len(set(recs) & set(train[train.user_id == u].book_id)))
+for b2 in recs:
+    print("   ", books[b2])
+
+# 비교용: 예상 평점(predict) 순으로 추천하면 어떻게 되는지
+def recommend_by_predict(model, user_id, k=10):
+    uid = model.uidx_[user_id]
+    rated = model.R_[uid].indices
+    cand = np.setdiff1d(np.arange(len(model.item_ids_)), rated)
+    preds = np.array([model.predict(user_id, model.item_ids_[i]) for i in cand])
+    return model.item_ids_[cand[np.argsort(-preds)[:k]]].tolist()
+
+class ByPredict:
+    def __init__(self, model): self.model = model
+    def recommend(self, user_id, k=10): return recommend_by_predict(self.model, user_id, k)
+
+print("Precision/Recall@K (val, 사용자 2,000명)")
+print("  Popularity       :", evaluate_topk(Popularity().fit(train), val, max_users=2000))
+print("  KNN, 예상 평점 순 (느려서 50명):", evaluate_topk(ByPredict(m), val, max_users=50))
+print("  KNN, 유사도 합 순:", evaluate_topk(m, val, max_users=2000))
