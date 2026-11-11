@@ -113,11 +113,13 @@ class ContentBased(Recommender):
         # 읽은 책(행) x 전체 책(열) 유사도를 행렬 곱 한 번으로 계산
         sims = linear_kernel(self.tfidf_combined[hist_idx], self.tfidf_combined)
 
-        # 책마다 predict와 같은 방식(유사도 가중 평균)으로 예상 평점 계산
-        num = hist_ratings @ sims
-        den = sims.sum(axis=0)
-        scores = np.full(den.shape, self.global_mean, dtype=float)
-        np.divide(num, den, out=scores, where=den > 0)
+        # 순위 점수 = 좋아한(4점 이상) 책들과의 유사도 합
+        # 가중 평균 평점으로 순위를 매기면 유사도가 아주 낮은 책도 5점이 되어 상위에 오므로,
+        # 유사도 크기가 그대로 남는 합을 쓴다 (knn.py의 recommend와 같은 방식)
+        liked = hist_ratings >= 4
+        if not liked.any():          # 좋아한 책이 없으면 읽은 책 전체 기준
+            liked[:] = True
+        scores = sims[liked].sum(axis=0)
 
         scores[hist_idx] = -np.inf  # 이미 읽은 책 제외
         top = np.argpartition(-scores, k)[:k]
