@@ -42,19 +42,21 @@ def _sgd_epoch(order, rows, cols, ratings, global_mean,
 
 class MatrixFactorization(Recommender):
     def __init__(self, n_factors: int = 50, lr: float = 0.005, reg: float = 0.02,
-                 n_epochs: int = 20, seed: int = 42):
+                 n_epochs: int = 20, seed: int = 42, like_threshold: float = 4.0):
         """
         n_factors: latent factor 수
         lr: SGD learning rate
         reg: L2 regularization 강도 (lambda)
         n_epochs: 학습 반복 횟수
         seed: 초기화 랜덤 시드
+        like_threshold: recommend()에서 "좋아한 책"으로 볼 최소 평점 (ItemKNN과 같은 기준)
         """
         self.n_factors = n_factors
         self.lr = lr
         self.reg = reg
         self.n_epochs = n_epochs
         self.seed = seed
+        self.like_threshold = like_threshold
 
     def fit(self, train: pd.DataFrame) -> "MatrixFactorization":
         rng = np.random.default_rng(self.seed)
@@ -95,6 +97,19 @@ class MatrixFactorization(Recommender):
                        self.user_bias_, self.item_bias_, self.P_, self.Q_,
                        float(self.lr), float(self.reg))
 
+        # ── recommend용 준비 ──
+        # 사용자별 "좋아한 책"(평점 ≥ like_threshold)의 행렬 위치. 좋아한 책이 없는 사용자는 평가한 책 전체를 쓴다.
+        liked = train["rating"].to_numpy() >= self.like_threshold
+        all_rated = pd.Series(cols).groupby(rows).apply(np.array).to_dict()
+        self.liked_ = pd.Series(cols[liked]).groupby(rows[liked]).apply(np.array).to_dict()
+        for uid, items in all_rated.items():
+            self.liked_.setdefault(uid, items)
+
+        # 도서 잠재벡터를 길이 1로 정규화해 둔다. 정규화된 벡터끼리의 내적 = cosine 유사도.
+        # (길이 0인 벡터는 나눗셈 에러가 나지 않도록 1로 나눈다)
+        norms = np.linalg.norm(self.Q_, axis=1, keepdims=True)
+        self.Q_unit_ = self.Q_ / np.where(norms == 0, 1.0, norms)
+
         return self
 
     def predict(self, user_id: int, book_id: int) -> float:
@@ -122,13 +137,20 @@ class MatrixFactorization(Recommender):
 
         uid = self.user_to_idx_[user_id]
 
-        # 모든 도서의 예상 평점을 한 번에 계산한다 (predict와 같은 식, 순위 기준도 기존과 같은 예상 평점).
-        #   Q_ @ P_[uid] → (도서 수 × n_factors) @ (n_factors,) = 도서마다 P_u·Q_i 값이 담긴 길이 1만 벡터
-        #   item_bias_도 길이 1만 벡터라 그대로 더하면 되고, global_mean_과 user_bias_[uid]는 숫자 하나라 전체에 더해진다.
-        # 파이썬 반복문으로 1만 번 내적하던 것을 numpy(BLAS) 행렬 곱 한 번으로 바꿔서 훨씬 빠르다.
-        # (predict와 달리 1~5로 clip하지 않는다. clip하면 5점을 넘는 책들이 모두 5.0으로 동점이 되어 순서가 사라지기 때문.
-        #  기존 반복문도 clip하지 않았으므로 순위는 그대로다.)
-        scores = self.global_mean_ + self.user_bias_[uid] + self.item_bias_ + self.Q_ @ self.P_[uid]
+        # 순위 점수: 좋아한 책들과의 잠재벡터(Q) cosine 유사도 합 (ItemKNN의 "유사도 합" 순위와 같은 원리)
+        #
+        #   score(i) = Σ_j cos(Q_i, Q_j)      (j = 사용자가 좋아한 책, 평점 ≥ like_threshold)
+        #
+        # 예상 평점 순을 쓰지 않는 이유 (val, 사용자 2,000명, results/mf_ranking_comparison.csv):
+        #   예상 평점 순은 Precision@10 0.005로 인기순(0.039)보다 낮다. 순위가 item bias로 거의 정해져서
+        #   "읽은 사람은 높게 주지만 읽는 사람이 적은 책"(평점 수 중앙값 191개)이 모두에게 추천된다.
+        #   예상 평점은 "읽으면 좋아할까"이고, Precision은 "실제로 읽고 좋아했나"라서 둘이 어긋난다.
+        #   reg 올리기(0.0004), bias에만 reg(0.016), 평점 적은 책 거르기(≤0.013), bias 빼기(0.013)는 효과가 작았고,
+        #   이 방식이 0.052로 유일하게 인기순보다 높았다. predict(RMSE)는 바뀌지 않는다.
+        #
+        # Σ_j (Q̂_i · Q̂_j) = Q̂_i · (Σ_j Q̂_j) 이므로, 좋아한 책 벡터를 먼저 더한 뒤 행렬 곱 한 번으로 1만 권 점수를 구한다.
+        # (Q̂ = 길이 1로 정규화한 Q_unit_. 음의 유사도도 그대로 더한다 — 실험에서 측정한 방식과 같게)
+        scores = self.Q_unit_ @ self.Q_unit_[self.liked_[uid]].sum(axis=0)
 
         # 이미 읽은 책은 -inf로 두어 상위 k개에 절대 뽑히지 않게 한다.
         # seen_은 book_id 집합이라, 행렬 위치로 바꿔서 한 번에 지정한다 (train에 있던 책이라 매핑에 항상 있음).
