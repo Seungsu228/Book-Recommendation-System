@@ -28,11 +28,14 @@ book_count = train.groupby("book_id").size()   # 도서별 train 평점 수 (= �
 
 # ── 1. 학습 ──────────────────────────────────────────────────────
 # ItemKNN은 knn_tune.py에서 고른 설정(pearson, k=40)을 쓴다.
+# MF는 mf_tune.py에서 고른 설정(n_factors=100, reg=0.02)을 쓴다.
+#   n_factors 50 → 100에서 RMSE는 0.002만 나빠지고 Precision@10은 0.052 → 0.072로 올랐다 (results/mf_tuning.csv).
+#   mf.py의 기본값(n_factors=50)은 그대로 두고 여기서만 지정한다.
 models = {
     "BookMean": BookMean(),
     "Popularity": Popularity(),
     "ItemKNN (pearson, k=40)": ItemKNN(k=40, similarity="pearson"),
-    "MF": MatrixFactorization(),
+    "MF": MatrixFactorization(n_factors=100, reg=0.02),
 }
 for name, m in models.items():
     t0 = time.time()
