@@ -27,7 +27,7 @@ def model_factories(books, knn_k=40, knn_similarity="pearson"):
 
     def mf():
         from .models.mf import MatrixFactorization
-        return MatrixFactorization()
+        return MatrixFactorization(n_factors=100, reg=0.02) # 튜닝 결과 (results/mf_tuning.csv)
 
     def content():
         from .models.content import ContentBased
