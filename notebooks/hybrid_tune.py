@@ -39,8 +39,8 @@ def main():
         model.alpha = alpha
         
         t_eval_start = time.time()
-        rmse_res = evaluate_rating(model, val)
-        p10_res = evaluate_topk(model, val)
+        rmse_res = evaluate_rating(model, val, sample_n=50_000) 
+        p10_res = evaluate_topk(model, val, max_users=2_000)
         eval_time = time.time() - t_eval_start
         
         # 딕셔너리로 반환될 경우 숫자값(float)만 안전하게 추출 (괄호 오타 수정 완료)
