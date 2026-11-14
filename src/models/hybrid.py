@@ -10,7 +10,7 @@ class Hybrid(Recommender):
     - recommend: 두 모델의 추천 순위를 역수 순위 가중합(Reciprocal Rank Fusion)으로 결합
     """
 
-    def __init__(self, cf_model: Recommender, content_model: Recommender, alpha: float = 0.7, recommend_pool: int = 200):
+    def __init__(self, cf_model: Recommender, content_model: Recommender, alpha: float = 0.9, recommend_pool: int = 200):
         """
         Args:
             cf_model: 미리 튜닝된 협업 필터링 모델 객체 (예: ItemKNN)
