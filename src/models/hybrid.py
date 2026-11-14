@@ -24,9 +24,7 @@ class Hybrid(Recommender):
         self.recommend_pool = recommend_pool
 
     def fit(self, train: pd.DataFrame):
-        """두 개별 모델을 각각 피팅합니다."""
-        #self.cf_model.fit(train)
-        #self.content_model.fit(train)
+        """학습된 하위 모델을 그대로 사용합니다. (하위 모델은 넘기기 전에 fit해 둘 것)"""
         return self
 
     def predict(self, user_id: int, book_id: int) -> float:
