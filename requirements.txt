@@ -5,6 +5,7 @@
 numpy            # numerical computation
 pandas           # data loading and processing
 scipy            # sparse rating matrix
+numba            # JIT compile for MF SGD training loop
 scikit-learn     # TF-IDF, cosine similarity, TruncatedSVD
 matplotlib       # plots
 jupyter          # notebooks/
