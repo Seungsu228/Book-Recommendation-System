@@ -27,14 +27,14 @@ def model_factories(books, knn_k=40, knn_similarity="pearson"):
 
     def mf():
         from .models.mf import MatrixFactorization
-        return MatrixFactorization(n_factors=100, reg=0.02) # 튜닝 결과 (results/mf_tuning.csv)
+        return MatrixFactorization(n_factors=100, reg=0.02)
 
     def content():
         from .models.content import ContentBased
         return ContentBased(books)
 
     return {
-        "GlobalMean": GlobalMean,
+        
         "BookMean": BookMean,
         "Popularity": Popularity,
         "ItemKNN": knn,
