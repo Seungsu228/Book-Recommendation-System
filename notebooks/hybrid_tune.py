@@ -16,9 +16,10 @@ def main():
     print("데이터를 로드하는 중입니다...")
     train, val, _ = load_data()
     books = load_books()
-    
-    knn_model = ItemKNN(k=40, similarity="pearson")
-    content_model = ContentBased(books=books)
+
+    # Hybrid.fit은 하위 모델을 다시 학습하지 않으므로, 여기서 먼저 학습시킨다
+    knn_model = ItemKNN(k=40, similarity="pearson").fit(train)
+    content_model = ContentBased(books=books).fit(train)
     
     # 1. 모델 조립
     model = Hybrid(cf_model=knn_model, content_model=content_model, alpha=0.5)
