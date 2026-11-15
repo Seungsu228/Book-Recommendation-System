@@ -68,7 +68,25 @@ pip install -r requirements.txt
 
 ## Results
 
-_To be added._
+
+Final evaluation on the test set, run once (50,000 ratings for RMSE/MAE, 2,000 users for Top-N, seed 42).
+
+| Model | RMSE | MAE | P@5 | R@5 | P@10 | R@10 |
+|---|---|---|---|---|---|---|
+| BookMean | 0.9509 | 0.7620 | 0.0452 | 0.0298 | 0.0378 | 0.0499 |
+| Popularity | 0.9509 | 0.7620 | 0.0452 | 0.0298 | 0.0378 | 0.0499 |
+| ContentBased | 0.8374 | 0.6437 | 0.1007 | 0.0688 | 0.0795 | 0.1073 |
+| MatrixFactorization (n_factors=100, reg=0.02) | 0.8247 | 0.6383 | 0.1031 | 0.0678 | 0.0742 | 0.0960 |
+| ItemKNN (k=40, pearson) | 0.8396 | 0.6147 | 0.1788 | 0.1200 | 0.1372 | 0.1818 |
+| Hybrid (ItemKNN, alpha=0.9) | 0.8269 | 0.6106 | 0.1796 | 0.1208 | 0.1360 | 0.1800 |
+| Hybrid (MF, alpha=0.9) | 0.8195 | 0.6348 | 0.1047 | 0.0688 | 0.0791 | 0.1030 |
+
+- Rating prediction: Hybrid (MF) has the lowest RMSE (0.8195).
+- Top-N recommendation: ItemKNN has the highest Precision@10 (0.1372); Hybrid (ItemKNN) is close (0.1360) with a lower RMSE.
+- Cold start (500 books with 5 training ratings each): only ContentBased still recommends (P@10 0.0358, RMSE 0.8337). See `results/results_cold_start.csv`.
+
+![Rating error](results/rating_error_test.png)
+![Top-N](results/topn_test.png)
 
 ## Contributing (team workflow)
 
