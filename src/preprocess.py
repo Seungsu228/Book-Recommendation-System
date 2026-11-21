@@ -15,6 +15,7 @@ STOP_TAGS = {
     "did-not-finish", "abandoned", "unfinished", "tbr", "i-own", "own-it","have",
     "borrowed", "e-book", "book-club", "favorites-", "all-time-favorites",
 }
+# Regular expression for tags that describe the reader's shelf or reading year rather than the book
 NOISE_TAG_PATTERN = (
     r"\d+|\d{4}-?reads?|\d{4}-books?|read-in-\d{4}|\d+-stars?"
     r"|.*favou?rite.*|.*to-read.*|.*currently-reading.*|(my-)?books?|novels?|books-i-own"
@@ -38,10 +39,13 @@ def load_data(seed: int = SEED, data_dir=DATA_DIR, val_ratio=0.1,
     ratings stay entirely in train. The split is fixed by seed.
     """
     ratings = load_ratings(data_dir)
+    # sample(frac=1.0, random_state=seed): shuffle all rows in a reproducible order
     shuffled = ratings.sample(frac=1.0, random_state=seed).reset_index(drop=True)
 
     grp = shuffled.groupby("user_id")["rating"]
+    # transform("size"): each row gets the number of ratings its user has (same length as the data)
     n = grp.transform("size").to_numpy()
+    # cumcount(): numbers each user's (shuffled) ratings 0, 1, 2, ... ; the first ones go to test, the next to val
     rank = grp.cumcount().to_numpy()
 
     n_test = np.maximum(1, np.round(n * test_ratio)).astype(int)
@@ -74,8 +78,11 @@ def load_books(data_dir=DATA_DIR, max_tags: int = 30) -> pd.DataFrame:
     bt = (book_tags[book_tags["count"] > 0]
           .merge(tags, on="tag_id")
           .merge(books[["book_id", "goodreads_book_id"]], on="goodreads_book_id"))
-    bt = bt[~bt["tag_name"].isin(STOP_TAGS)]
+    bt = bt[~bt["tag_name"].isin(STOP_TAGS)]                     # drop personal-shelf tags listed in STOP_TAGS
+    # str.fullmatch(pattern): True when the WHOLE tag matches the regular expression
+    # (year tags like "2016-reads", star tags like "5-stars", shelf variants), and those tags are dropped
     bt = bt[~bt["tag_name"].str.fullmatch(NOISE_TAG_PATTERN)]
+    # most used tags first within each book, then groupby(...).head(max_tags) keeps the first max_tags per book
     bt = (bt.sort_values(["book_id", "count"], ascending=[True, False])
             .groupby("book_id").head(max_tags))
 
@@ -100,6 +107,7 @@ def load_cold_start_split(n_books: int = 500, keep: int = 5, seed: int = SEED,
     counts = ratings["book_id"].value_counts()
     eligible = np.sort(counts[counts >= max(min_ratings, keep + 1)].index.to_numpy())
     n_books = min(n_books, len(eligible))
+    # np.random.default_rng(seed).choice(..., replace=False): pick n_books different books, reproducibly
     cold_books = rng.choice(eligible, size=n_books, replace=False)
 
     cold = ratings[ratings["book_id"].isin(cold_books)].sample(frac=1.0, random_state=seed)
