@@ -5,34 +5,35 @@ from numba import njit
 from .base import Recommender
 
 
-# ── SGD 한 epoch (numba로 컴파일) ───────────────────────────────────
-# 파이썬 for문은 한 번 돌 때마다 인터프리터가 타입 확인, 객체 생성 등을 해서 느리다.
-# 평점 478만 건 x 20 epoch = 약 1억 번을 돌면 그 오버헤드만으로 30분 이상 걸린다.
-# @njit은 이 함수를 처음 호출할 때 기계어로 컴파일해서, C로 짠 반복문과 비슷한 속도로 돌게 한다.
-# (nopython 모드라 numpy 배열과 숫자만 다룰 수 있다. 그래서 self 대신 배열들을 인자로 받는다.)
-# cache=True: 컴파일 결과를 __pycache__에 저장해서 다음 실행부터는 컴파일 시간(수 초)을 건너뛴다.
+# ── One SGD epoch (compiled with numba) ─────────────────────────────
+# A plain Python for loop is slow because the interpreter checks types and creates objects on every step.
+# 4.78 million ratings x 20 epochs = about 100 million steps, which takes over 30 minutes from that overhead alone.
+# @njit (numba) compiles this function to machine code the first time it is called, so it runs at about
+# the speed of a loop written in C.
+# (In nopython mode it can only handle numpy arrays and numbers, so it takes arrays as arguments instead of self.)
+# cache=True: saves the compiled code in __pycache__, so later runs skip the compile time (a few seconds).
 @njit(cache=True)
 def _sgd_epoch(order, rows, cols, ratings, global_mean,
                user_bias, item_bias, P, Q, lr, reg):
-    """order 순서대로 평점을 하나씩 보며 b_u, b_i, P_u, Q_i를 갱신한다 (배열을 그 자리에서 수정)."""
+    """Go through the ratings in `order` one by one and update b_u, b_i, P_u, Q_i (arrays are modified in place)."""
     n_factors = P.shape[1]
     for pos in order:
         u = rows[pos]
         i = cols[pos]
 
-        # 예측 = 전체평균 + b_u + b_i + P_u·Q_i  (기존 코드의 self.P_[u] @ self.Q_[i]를 반복문으로 계산)
+        # prediction = global mean + b_u + b_i + P_u·Q_i  (the dot product self.P_[u] @ self.Q_[i] written as a loop)
         dot = 0.0
         for f in range(n_factors):
             dot += P[u, f] * Q[i, f]
         err = ratings[pos] - (global_mean + user_bias[u] + item_bias[i] + dot)
 
-        # 바이어스 갱신: b ← b + lr·(err − reg·b)
+        # bias update: b ← b + lr·(err − reg·b)
         user_bias[u] += lr * (err - reg * user_bias[u])
         item_bias[i] += lr * (err - reg * item_bias[i])
 
-        # 잠재 벡터 갱신: P_u ← P_u + lr·(err·Q_i − reg·P_u), Q_i ← Q_i + lr·(err·P_u − reg·Q_i)
-        # 기존 코드에서 p_u, q_i를 .copy()해 둔 것과 같은 이유로, 갱신 전 값(pu, qi)을 먼저 꺼내 둔다.
-        # 그래야 Q_i를 갱신할 때 "이미 바뀐 P_u"가 아니라 "바뀌기 전 P_u"를 쓴다.
+        # latent vector update: P_u ← P_u + lr·(err·Q_i − reg·P_u), Q_i ← Q_i + lr·(err·P_u − reg·Q_i)
+        # For the same reason the earlier version used .copy() on p_u and q_i, we read the old values (pu, qi) first,
+        # so that Q_i is updated with the old P_u, not the P_u we just changed.
         for f in range(n_factors):
             pu = P[u, f]
             qi = Q[i, f]
@@ -44,12 +45,12 @@ class MatrixFactorization(Recommender):
     def __init__(self, n_factors: int = 50, lr: float = 0.005, reg: float = 0.02,
                  n_epochs: int = 20, seed: int = 42, like_threshold: float = 4.0):
         """
-        n_factors: latent factor 수
+        n_factors: number of latent factors
         lr: SGD learning rate
-        reg: L2 regularization 강도 (lambda)
-        n_epochs: 학습 반복 횟수
-        seed: 초기화 랜덤 시드
-        like_threshold: recommend()에서 "좋아한 책"으로 볼 최소 평점 (ItemKNN과 같은 기준)
+        reg: L2 regularization strength (lambda)
+        n_epochs: number of training passes over the data
+        seed: random seed for initialization and shuffling
+        like_threshold: minimum rating for a book to count as "liked" in recommend() (same rule as ItemKNN)
         """
         self.n_factors = n_factors
         self.lr = lr
@@ -59,6 +60,7 @@ class MatrixFactorization(Recommender):
         self.like_threshold = like_threshold
 
     def fit(self, train: pd.DataFrame) -> "MatrixFactorization":
+        # np.random.default_rng(seed): seeded random generator, so the same seed always gives the same result
         rng = np.random.default_rng(self.seed)
 
         if "user_id" not in train.columns or "book_id" not in train.columns or "rating" not in train.columns:
@@ -79,6 +81,7 @@ class MatrixFactorization(Recommender):
         item_counts = train.groupby("book_id").size()
         self.item_popularity_ = item_counts.sort_values(ascending=False).index.to_numpy()
 
+        # Biases start at 0; latent vectors start from small random values, normal(mean 0, std 0.1)
         self.user_bias_ = np.zeros(self.n_users, dtype=np.float64)
         self.item_bias_ = np.zeros(self.n_items, dtype=np.float64)
         self.P_ = rng.normal(0.0, 0.1, size=(self.n_users, self.n_factors)).astype(np.float64)
@@ -89,24 +92,25 @@ class MatrixFactorization(Recommender):
         ratings = train["rating"].to_numpy(dtype=np.float64)
 
         for _ in range(self.n_epochs):
-            # 섞는 순서는 기존과 똑같이 파이썬 쪽 rng로 만든다.
-            # numba 안에서 섞으면 난수 생성기가 달라져 같은 seed여도 결과가 바뀌기 때문이다.
+            # The shuffle order is made with the Python-side rng, as before.
+            # Shuffling inside numba would use a different random generator and change results for the same seed.
             idx = rng.permutation(len(rows))
-            # 평점 하나씩 갱신하는 안쪽 반복문만 numba 함수로 넘긴다 (배열을 그 자리에서 수정하므로 반환값 없음)
+            # Only the inner loop that updates one rating at a time goes to the numba function
+            # (it modifies the arrays in place, so nothing is returned)
             _sgd_epoch(idx, rows, cols, ratings, self.global_mean_,
                        self.user_bias_, self.item_bias_, self.P_, self.Q_,
                        float(self.lr), float(self.reg))
 
-        # ── recommend용 준비 ──
-        # 사용자별 "좋아한 책"(평점 ≥ like_threshold)의 행렬 위치. 좋아한 책이 없는 사용자는 평가한 책 전체를 쓴다.
+        # ── Preparation for recommend ──
+        # Matrix positions of each user's "liked" books (rating ≥ like_threshold). Users with no liked book use all rated books.
         liked = train["rating"].to_numpy() >= self.like_threshold
         all_rated = pd.Series(cols).groupby(rows).apply(np.array).to_dict()
         self.liked_ = pd.Series(cols[liked]).groupby(rows[liked]).apply(np.array).to_dict()
         for uid, items in all_rated.items():
             self.liked_.setdefault(uid, items)
 
-        # 도서 잠재벡터를 길이 1로 정규화해 둔다. 정규화된 벡터끼리의 내적 = cosine 유사도.
-        # (길이 0인 벡터는 나눗셈 에러가 나지 않도록 1로 나눈다)
+        # Normalize the book latent vectors to length 1. Dot product of normalized vectors = cosine similarity.
+        # (Zero-length vectors are divided by 1 to avoid division by zero)
         norms = np.linalg.norm(self.Q_, axis=1, keepdims=True)
         self.Q_unit_ = self.Q_ / np.where(norms == 0, 1.0, norms)
 
@@ -137,23 +141,29 @@ class MatrixFactorization(Recommender):
 
         uid = self.user_to_idx_[user_id]
 
-        # 순위 점수: 좋아한 책들과의 잠재벡터(Q) cosine 유사도 합 (ItemKNN의 "유사도 합" 순위와 같은 원리)
+        # Ranking score: sum of cosine similarities between latent vectors (Q) and the liked books
+        # (same idea as ItemKNN's "similarity sum" ranking)
         #
-        #   score(i) = Σ_j cos(Q_i, Q_j)      (j = 사용자가 좋아한 책, 평점 ≥ like_threshold)
+        #   score(i) = Σ_j cos(Q_i, Q_j)      (j = books the user liked, rating ≥ like_threshold)
         #
-        # 예상 평점 순을 쓰지 않는 이유 (val, 사용자 2,000명, results/mf_ranking_comparison.csv):
-        #   예상 평점 순은 Precision@10 0.005로 인기순(0.039)보다 낮다. 순위가 item bias로 거의 정해져서
-        #   "읽은 사람은 높게 주지만 읽는 사람이 적은 책"(평점 수 중앙값 191개)이 모두에게 추천된다.
-        #   예상 평점은 "읽으면 좋아할까"이고, Precision은 "실제로 읽고 좋아했나"라서 둘이 어긋난다.
-        #   reg 올리기(0.0004), bias에만 reg(0.016), 평점 적은 책 거르기(≤0.013), bias 빼기(0.013)는 효과가 작았고,
-        #   이 방식이 0.052로 유일하게 인기순보다 높았다. predict(RMSE)는 바뀌지 않는다.
+        # Why we do not rank by predicted rating (validation, 2,000 users, results/mf_ranking_comparison.csv):
+        #   Ranking by predicted rating gives Precision@10 0.005, below popularity (0.039). The ranking is almost
+        #   decided by the item bias, so "books few people read but those readers rate highly" (median 191 ratings)
+        #   are recommended to everyone.
+        #   A predicted rating answers "would they like it if they read it", while Precision asks "did they actually
+        #   read and like it", so the two do not match.
+        #   Raising reg (0.0004), reg on biases only (0.016), filtering out books with few ratings (≤0.013) and
+        #   dropping the biases (0.013) helped little; this method (0.052) was the only one above popularity.
+        #   predict() (RMSE) is not changed.
         #
-        # Σ_j (Q̂_i · Q̂_j) = Q̂_i · (Σ_j Q̂_j) 이므로, 좋아한 책 벡터를 먼저 더한 뒤 행렬 곱 한 번으로 1만 권 점수를 구한다.
-        # (Q̂ = 길이 1로 정규화한 Q_unit_. 음의 유사도도 그대로 더한다 — 실험에서 측정한 방식과 같게)
+        # Since Σ_j (Q̂_i · Q̂_j) = Q̂_i · (Σ_j Q̂_j), we first add up the liked books' vectors and then score
+        # all 10,000 books with one matrix product.
+        # (Q̂ = Q_unit_, normalized to length 1. Negative similarities are added as they are, as in the experiment)
         scores = self.Q_unit_ @ self.Q_unit_[self.liked_[uid]].sum(axis=0)
 
-        # 이미 읽은 책은 -inf로 두어 상위 k개에 절대 뽑히지 않게 한다.
-        # seen_은 book_id 집합이라, 행렬 위치로 바꿔서 한 번에 지정한다 (train에 있던 책이라 매핑에 항상 있음).
+        # Books already read get -inf so they can never be in the top k.
+        # seen_ is a set of book_ids, so convert them to matrix positions and set them at once
+        # (they were in train, so they are always in the mapping).
         if seen:
             scores[[self.item_to_idx_[b] for b in seen]] = -np.inf
 
@@ -162,7 +172,7 @@ class MatrixFactorization(Recommender):
             return []
 
         top_k = min(k, candidate_count)
-        # 1만 개 전체를 정렬하지 않고, argpartition으로 상위 top_k개만 골라낸 뒤 그 top_k개만 정렬한다.
+        # Instead of sorting all 10,000 scores, np.argpartition picks the top top_k first and only those are sorted.
         top_idx = np.argpartition(-scores, top_k - 1)[:top_k]
         top_idx = top_idx[np.argsort(-scores[top_idx])]
         return self.item_ids_[top_idx].astype(int).tolist()

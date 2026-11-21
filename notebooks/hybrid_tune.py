@@ -13,28 +13,28 @@ from src.models.content import ContentBased
 from src.models.hybrid import Hybrid
 
 def main():
-    print("데이터를 로드하는 중입니다...")
+    print("Loading data...")
     train, val, _ = load_data()
     books = load_books()
 
-    # Hybrid.fit은 하위 모델을 다시 학습하지 않으므로, 여기서 먼저 학습시킨다
+    # Hybrid.fit does not retrain the sub-models, so train them here first
     knn_model = ItemKNN(k=40, similarity="pearson").fit(train)
     content_model = ContentBased(books=books).fit(train)
     
-    # 1. 모델 조립
+    # 1. Assemble the model
     model = Hybrid(cf_model=knn_model, content_model=content_model, alpha=0.5)
     
-    print("\n[1단계] 기반 모델(KNN, Content) 사전 학습을 시작합니다...")
+    print("\n[Step 1] Fitting the base models (KNN, Content)...")
     t_fit_start = time.time()
     model.fit(train)
-    print(f"사전 학습 완료! ({time.time() - t_fit_start:.0f}초 소요)\n")
+    print(f"Fitting done! ({time.time() - t_fit_start:.0f}s)\n")
     
     alphas = [0.1, 0.3, 0.5, 0.7, 0.9]
-    print("[2단계] 최적의 alpha 값을 찾기 위한 평가를 시작합니다...")
+    print("[Step 2] Evaluating alpha values to find the best one...")
     results = []
     
     for alpha in alphas:
-        print(f"  -> alpha={alpha:.1f} 평가 중... ", end='', flush=True)
+        print(f"  -> evaluating alpha={alpha:.1f}... ", end='', flush=True)
         
         model.alpha = alpha
         
@@ -43,16 +43,16 @@ def main():
         p10_res = evaluate_topk(model, val, max_users=2_000)
         eval_time = time.time() - t_eval_start
         
-        # 딕셔너리로 반환될 경우 숫자값(float)만 안전하게 추출 (괄호 오타 수정 완료)
+        # If a dict is returned, safely take only the number (float) (bracket typo fixed)
         rmse = rmse_res.get('rmse', list(rmse_res.values())[0]) if isinstance(rmse_res, dict) else rmse_res
         p10 = p10_res.get('precision@10', p10_res.get('p@10', list(p10_res.values())[0])) if isinstance(p10_res, dict) else p10_res
         
-        print(f"완료! (rmse={rmse:.4f} / p@10={p10:.4f} / {eval_time:.0f}초 소요)")
+        print(f"done! (rmse={rmse:.4f} / p@10={p10:.4f} / {eval_time:.0f}s)")
         results.append({'alpha': alpha, 'rmse': rmse, 'p@10': p10})
 
     results_df = pd.DataFrame(results)
     results_df.to_csv("results/hybrid_tuning.csv", index=False)
-    print("\n튜닝 완료! 결과가 results/hybrid_tuning.csv에 저장되었습니다.")
+    print("\nTuning done! Results saved to results/hybrid_tuning.csv.")
 
 if __name__ == "__main__":
     main()
